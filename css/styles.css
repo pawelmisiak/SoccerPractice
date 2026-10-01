@@ -713,3 +713,18 @@ table.family .mcell { display: flex; align-items: center; gap: 10px; font-size: 
   margin-top: 16px;
   font-variant-numeric: tabular-nums;
 }
+
+/* ---------- player tile edit button ---------- */
+.tile-wrap { position: relative; display: grid; }
+.tile-edit {
+  position: absolute;
+  top: 16px;
+  right: 14px;
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  font-size: 22px;
+}
+.tile-edit:active { transform: scale(0.94); }

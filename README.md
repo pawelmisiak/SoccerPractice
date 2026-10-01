@@ -13,7 +13,7 @@ A soccer skills tracker for the whole family, built for an iPad. It's a web app 
 - **The screen stays awake** during a round (Screen Wake Lock, plus a silent video fallback for older iPadOS).
 - **Records and celebrations:** confetti and "GOOOOL!" for a new personal best, plus levels from 🌱 Rookie to 🐐 G.O.A.T.
 - **Progress:** a chart and history for every move, and a family 🏆 Trophy Room that compares records.
-- **Add players** right from the "Who's training today?" screen with the ➕ tile.
+- **Add players** right from the "Who's training today?" screen with the ➕ tile, edit a player's name or shirt with ✏️, and use **👥 Switch player** to go back to the player list.
 - **Parent Corner** (press and hold ⚙️ for 1.5 seconds): edit or delete players, add or edit moves, change the rules (clock length, race target, countdown, sound), and back up or restore data.
 
 All data stays on the iPad (no accounts, no server). Use **Parent Corner → Save backup** now and then.

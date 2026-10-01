@@ -535,7 +535,7 @@
       <button class="icon-btn hold-btn" data-hold="parent" aria-label="Parent settings (press and hold)">⚙️</button>
     </div>`;
 
-  function playerHeader(p, backAction = 'toPlayers') {
+  function playerHeader(p, backAction = 'toPlayers', extra = '') {
     const n = playerCount(p.id);
     const lv = levelFor(n);
     return `
@@ -550,6 +550,7 @@
           </div>
         </div>
         <div class="spacer"></div>
+        ${extra}
       </div>`;
   }
 
@@ -569,12 +570,12 @@
         const lv = levelFor(n);
         const st = streakFor(p.id);
         const k = KITS[p.kit] || KITS.blaugrana;
-        return `<button class="card player-tile" style="--tile-accent: linear-gradient(90deg, ${k.a}, ${k.b})" data-action="pickPlayer" data-id="${p.id}">
+        return `<div class="tile-wrap"><button class="card player-tile" style="--tile-accent: linear-gradient(90deg, ${k.a}, ${k.b})" data-action="pickPlayer" data-id="${p.id}">
             ${jerseySVG(p, 150)}
             <div class="pname">${esc(p.name)}</div>
             <div class="badge">${lv.emoji} ${esc(lv.name)}</div>
             <div class="${st ? 'streak' : 'muted'}">${st ? `🔥 ${st}-day streak` : `${n} training${n === 1 ? '' : 's'}`}</div>
-          </button>`;
+          </button><button class="tile-edit" data-action="editPlayerTile" data-id="${p.id}" aria-label="Edit ${esc(p.name)}">✏️</button></div>`;
       }).join('');
       return `${topbarHome()}
         <h1 class="title">Who's training <span class="gold">today?</span></h1>
@@ -608,7 +609,7 @@
             ${best ? `<div class="mbest">🏆 ${esc(scoreText(best))} ${scoreUnit(best)}</div>` : '<div class="mbest none">No record yet</div>'}
           </button>`;
       }).join('');
-      return `${playerHeader(p)}
+      return `${playerHeader(p, 'toPlayers', '<button class="btn small" data-action="toPlayers">👥 Switch player</button>')}
         <div class="card level">
           <div class="level-emoji">${lv.emoji}</div>
           <div class="level-main">
@@ -868,7 +869,7 @@
             <div class="field"><label>Kit</label><div class="kit-grid">${kits}</div></div>
             <div class="btn-row" style="justify-content:flex-start">
               <button class="btn primary" data-action="savePlayer">✅ Save</button>
-              ${isNew ? '' : '<button class="btn danger" data-action="deletePlayer">🗑️ Delete player</button>'}
+              ${isNew || state.editFrom !== 'parent' ? '' : '<button class="btn danger" data-action="deletePlayer">🗑️ Delete player</button>'}
             </div>
           </div>
         </div>`;
@@ -1294,6 +1295,10 @@
   const ACTIONS = {
     toPlayers: () => go('players'),
     family: () => go('family'),
+    editPlayerTile: (el) => {
+      const p = player(el.dataset.id);
+      if (p) go('editPlayer', { editPlayerId: p.id, editFrom: 'players', draft: { name: p.name, number: p.number, kit: p.kit } });
+    },
     addPlayerTile: () => go('editPlayer', { editPlayerId: null, editFrom: 'players', draft: newDraft() }),
     firstPlayer: () => go('editPlayer', { editPlayerId: null, editFrom: 'players', draft: newDraft() }),
     newPlayer: () => go('editPlayer', { editPlayerId: null, editFrom: 'parent', draft: newDraft() }),

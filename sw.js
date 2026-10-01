@@ -1,6 +1,6 @@
 // Offline support. Network-first so updates show up right away when online;
 // falls back to the cached copy when the iPad has no connection.
-const CACHE = 'golazo-v2';
+const CACHE = 'golazo-v3';
 const ASSETS = [
   './',
   'index.html',
