@@ -9,10 +9,12 @@ A soccer skills tracker for the whole family, built for an iPad. It's a web app 
   - ⏱️ **Beat the Clock**: how many reps in 1:00? When time is up, type the number of reps on a big keypad.
   - 🏁 **Race to 50**: how fast can you do 50 reps? Tap the big button when you're done.
 - **A full-screen start button with the clock inside it.** It's green (a soccer pitch) before the start and turns red while the clock runs. There's an optional 3-second get-ready countdown, a referee whistle and beeps.
+- **🎤 Counts reps by sound:** for moves like Wall Passes, the iPad's microphone hears each time the ball hits the wall and counts it. In Beat the Clock the count is filled in for you to check, and Race to 50 stops by itself on the 50th hit. You can turn this on for any move, and there's a microphone test with a sensitivity setting in Parent Corner.
 - **The screen stays awake** during a round (Screen Wake Lock, plus a silent video fallback for older iPadOS).
 - **Records and celebrations:** confetti and "GOOOOL!" for a new personal best, plus levels from 🌱 Rookie to 🐐 G.O.A.T.
 - **Progress:** a chart and history for every move, and a family 🏆 Trophy Room that compares records.
-- **Parent Corner** (press and hold ⚙️ for 1.5 seconds): add or edit players and moves, change the rules (clock length, race target, countdown, sound), and back up or restore data.
+- **Add players** right from the "Who's training today?" screen with the ➕ tile.
+- **Parent Corner** (press and hold ⚙️ for 1.5 seconds): edit or delete players, add or edit moves, change the rules (clock length, race target, countdown, sound), and back up or restore data.
 
 All data stays on the iPad (no accounts, no server). Use **Parent Corner → Save backup** now and then.
 
@@ -43,6 +45,7 @@ Then open http://localhost:8080.
 | `index.html` | App shell |
 | `css/styles.css` | All styling (blaugrana theme) |
 | `js/app.js` | All app logic: views, timer, storage, charts |
+| `js/hit-worklet.js` | Microphone hit detector (runs on the audio thread) |
 | `sw.js` | Service worker for offline use |
 | `manifest.webmanifest` | Home-screen app settings |
 | `assets/` | Icons and the tiny keep-awake video |
