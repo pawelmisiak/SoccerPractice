@@ -646,3 +646,85 @@ table.family .mcell { display: flex; align-items: center; gap: 10px; font-size: 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ---------- add-player tile ---------- */
+.add-tile { border-style: dashed; border-color: rgba(237, 187, 0, 0.55); background: rgba(255, 255, 255, 0.04); justify-content: center; }
+.add-tile::before { display: none; }
+.add-plus {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 84px;
+  font-weight: 900;
+  line-height: 1;
+  color: #1b1440;
+  background: linear-gradient(180deg, var(--gold-soft), var(--gold));
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+  margin: 15px 0;
+}
+
+/* ---------- sound counting ---------- */
+.bigbtn .count {
+  position: relative;
+  z-index: 1;
+  font-weight: 900;
+  font-size: clamp(36px, 8vh, 80px);
+  line-height: 1;
+  color: #1b1440;
+  background: var(--gold);
+  border-radius: 999px;
+  padding: 8px 30px;
+  margin-top: 1.5vh;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+}
+.bigbtn .count[hidden] { display: none; }
+.bigbtn.listening .clock { font-size: min(26vw, 34vh); }
+.bigbtn.bump .count, .mic-hits.bump { animation: bump 0.35s ease-out; }
+@keyframes bump {
+  0% { transform: scale(1.35); }
+  100% { transform: scale(1); }
+}
+
+.meter {
+  position: relative;
+  height: 34px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+.meter i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, var(--pitch), #8bd17c);
+  transition: width 0.05s linear;
+}
+.meter i.over { background: linear-gradient(90deg, var(--gold), var(--red)); }
+.meter b { position: absolute; top: 0; bottom: 0; width: 4px; margin-left: -2px; background: #fff; }
+.mic-hits {
+  text-align: center;
+  font-weight: 900;
+  font-size: 110px;
+  line-height: 1.1;
+  color: var(--gold-soft);
+  margin-top: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- player tile edit button ---------- */
+.tile-wrap { position: relative; display: grid; }
+.tile-edit {
+  position: absolute;
+  top: 16px;
+  right: 14px;
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  font-size: 22px;
+}
+.tile-edit:active { transform: scale(0.94); }

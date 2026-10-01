@@ -25,7 +25,7 @@
     { name: 'Sole Rolls', icon: '🌀' },
     { name: 'Pull-Backs', icon: '🔁' },
     { name: 'Step-Overs', icon: '⚡' },
-    { name: 'Wall Passes', icon: '🧱' },
+    { name: 'Wall Passes', icon: '🧱', mic: true },
   ];
 
   const MOVE_ICONS = ['⚽', '👟', '🦶', '↔️', '🌀', '🔁', '⚡', '🧱', '🎯', '🔥', '⭐', '🚀', '🌪️', '🐐', '🪄', '🏃', '🥅', '💫'];
@@ -56,7 +56,7 @@
       players: [],
       moves: DEFAULT_MOVES.map((m) => ({ id: uid(), ...m })),
       sessions: [],
-      settings: { timedSeconds: 60, raceTarget: 50, countdown: 3, sound: true },
+      settings: { timedSeconds: 60, raceTarget: 50, countdown: 3, sound: true, micSensitivity: 3, micGap: 300 },
     };
   }
 
@@ -66,7 +66,8 @@
     return {
       version: 1,
       players: Array.isArray(d.players) ? d.players : [],
-      moves: Array.isArray(d.moves) ? d.moves : base.moves,
+      // Older data has no `mic` flag on moves: turn sound counting on for Wall Passes only.
+      moves: Array.isArray(d.moves) ? d.moves.map((m) => (m.mic === undefined ? { ...m, mic: m.name === 'Wall Passes' } : m)) : base.moves,
       sessions: Array.isArray(d.sessions) ? d.sessions : [],
       settings: { ...base.settings, ...(d.settings || {}) },
     };
@@ -242,7 +243,12 @@
       o.connect(g).connect(this.ctx.destination);
       o.start(t);
       o.stop(t + dur + 0.05);
+      this.markBusy(t + dur);
     },
+    // Remember when our own sounds end, so the microphone doesn't count them as hits.
+    busyUntil: 0,
+    markBusy(end) { this.busyUntil = Math.max(this.busyUntil, end + 0.15); },
+    isBusy() { return !!this.ctx && this.ctx.currentTime < this.busyUntil; },
     beep() { this.tone(880, 0.15, { vol: 0.3 }); },
     // Referee whistle: high tone with a fast trill.
     whistle(dur = 0.5, at = 0) {
@@ -264,6 +270,7 @@
       o.connect(g).connect(this.ctx.destination);
       o.start(t); lfo.start(t);
       o.stop(t + dur + 0.05); lfo.stop(t + dur + 0.05);
+      this.markBusy(t + dur);
     },
     finalWhistle() { this.whistle(0.35); this.whistle(0.35, 0.45); this.whistle(0.8, 0.9); },
     fanfare() {
@@ -325,6 +332,69 @@
       keepAwake.startVideo();
     }
   });
+
+  // ---------------------------------------------------------------------------
+  // Microphone rep counter: hears the ball hitting the wall (see hit-worklet.js).
+  // ---------------------------------------------------------------------------
+  // Sensitivity 1 (only very loud hits) … 5 (picks up soft taps).
+  const MIC_THRESHOLDS = [0.4, 0.25, 0.15, 0.09, 0.05];
+
+  const mic = {
+    stream: null,
+    src: null,
+    node: null,
+    loaded: false,
+    onHit: null,
+    onLevel: null,
+    supported() {
+      return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.AudioWorkletNode);
+    },
+    threshold() {
+      return MIC_THRESHOLDS[(data.settings.micSensitivity || 3) - 1] || 0.15;
+    },
+    // Call from a tap (so the audio context may start). Rejects if the mic is blocked.
+    async start() {
+      this.stop();
+      sound.unlock();
+      const ctx = sound.ctx;
+      if (!ctx || !this.supported()) throw new Error('unsupported');
+      if (!this.loaded) {
+        await ctx.audioWorklet.addModule('js/hit-worklet.js');
+        this.loaded = true;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+      });
+      this.stream = stream;
+      this.src = ctx.createMediaStreamSource(stream);
+      this.node = new AudioWorkletNode(ctx, 'hit-detector');
+      this.configure();
+      this.node.port.onmessage = (e) => {
+        const m = e.data;
+        if (m.type === 'hit') {
+          // Ignore our own whistle and beeps.
+          if (!sound.isBusy() && this.onHit) this.onHit(m.level);
+        } else if (this.onLevel) {
+          this.onLevel(m.level);
+        }
+      };
+      this.src.connect(this.node);
+      // The node outputs silence; connecting it keeps the browser processing it.
+      this.node.connect(ctx.destination);
+    },
+    configure() {
+      if (this.node) this.node.port.postMessage({ threshold: this.threshold(), gap: (data.settings.micGap || 300) / 1000 });
+    },
+    stop() {
+      try {
+        if (this.src) this.src.disconnect();
+        if (this.node) { this.node.port.onmessage = null; this.node.disconnect(); }
+      } catch (e) { /* already disconnected */ }
+      if (this.stream) this.stream.getTracks().forEach((t) => t.stop());
+      this.stream = this.src = this.node = null;
+      this.onHit = this.onLevel = null;
+    },
+  };
 
   // ---------------------------------------------------------------------------
   // UI helpers
@@ -465,7 +535,7 @@
       <button class="icon-btn hold-btn" data-hold="parent" aria-label="Parent settings (press and hold)">⚙️</button>
     </div>`;
 
-  function playerHeader(p, backAction = 'toPlayers') {
+  function playerHeader(p, backAction = 'toPlayers', extra = '') {
     const n = playerCount(p.id);
     const lv = levelFor(n);
     return `
@@ -480,6 +550,7 @@
           </div>
         </div>
         <div class="spacer"></div>
+        ${extra}
       </div>`;
   }
 
@@ -499,16 +570,22 @@
         const lv = levelFor(n);
         const st = streakFor(p.id);
         const k = KITS[p.kit] || KITS.blaugrana;
-        return `<button class="card player-tile" style="--tile-accent: linear-gradient(90deg, ${k.a}, ${k.b})" data-action="pickPlayer" data-id="${p.id}">
+        return `<div class="tile-wrap"><button class="card player-tile" style="--tile-accent: linear-gradient(90deg, ${k.a}, ${k.b})" data-action="pickPlayer" data-id="${p.id}">
             ${jerseySVG(p, 150)}
             <div class="pname">${esc(p.name)}</div>
             <div class="badge">${lv.emoji} ${esc(lv.name)}</div>
             <div class="${st ? 'streak' : 'muted'}">${st ? `🔥 ${st}-day streak` : `${n} training${n === 1 ? '' : 's'}`}</div>
-          </button>`;
+          </button><button class="tile-edit" data-action="editPlayerTile" data-id="${p.id}" aria-label="Edit ${esc(p.name)}">✏️</button></div>`;
       }).join('');
       return `${topbarHome()}
         <h1 class="title">Who's training <span class="gold">today?</span></h1>
-        <div class="player-grid">${tiles}</div>`;
+        <div class="player-grid">${tiles}
+          <button class="card player-tile add-tile" data-action="addPlayerTile" aria-label="Add a player">
+            <div class="add-plus">+</div>
+            <div class="pname">Add player</div>
+            <div class="muted">New teammate</div>
+          </button>
+        </div>`;
     },
 
     home() {
@@ -532,7 +609,7 @@
             ${best ? `<div class="mbest">🏆 ${esc(scoreText(best))} ${scoreUnit(best)}</div>` : '<div class="mbest none">No record yet</div>'}
           </button>`;
       }).join('');
-      return `${playerHeader(p)}
+      return `${playerHeader(p, 'toPlayers', '<button class="btn small" data-action="toPlayers">👥 Switch player</button>')}
         <div class="card level">
           <div class="level-emoji">${lv.emoji}</div>
           <div class="level-main">
@@ -561,13 +638,14 @@
             ${jerseySVG(p, 54, false)}
             <div class="train-info">
               <div class="train-move">${esc(m.icon)} ${esc(m.name)}</div>
-              <div class="train-mode">${esc(p.name)} · ${mi.icon} ${esc(mi.name)}</div>
+              <div class="train-mode">${esc(p.name)} · ${mi.icon} ${esc(mi.name)}${useMic(m) ? ' · 🎤 Sound counting' : ''}</div>
             </div>
             <div class="spacer"></div>
             <div class="train-best"><small>Record</small>${best ? `${esc(scoreText(best))} ${scoreUnit(best)}` : '—'}</div>
           </div>
           <button class="bigbtn ready" id="bigbtn" aria-label="Start">
             <div class="clock" id="clock">${startClock}</div>
+            <div class="count" id="count" hidden></div>
             <div class="hint" id="hint">Tap to kick off ⚽</div>
           </button>
         </div>`;
@@ -685,7 +763,7 @@
       const moves = data.moves.map((m) => `
         <div class="list-row">
           <div style="font-size:30px">${esc(m.icon)}</div>
-          <div class="grow">${esc(m.name)}<small>${data.sessions.filter((x) => x.moveId === m.id).length} sessions</small></div>
+          <div class="grow">${esc(m.name)}<small>${data.sessions.filter((x) => x.moveId === m.id).length} sessions${m.mic ? ' · 🎤 sound counting' : ''}</small></div>
           <button class="btn small" data-action="editMove" data-id="${m.id}">Edit</button>
         </div>`).join('');
       const chips = (key, opts, fmt) => `<div class="chips">${opts.map((o) => `<button class="chip ${s[key] === o ? 'on' : ''}" data-action="setting" data-key="${key}" data-val="${o}">${fmt(o)}</button>`).join('')}</div>`;
@@ -712,6 +790,17 @@
           <div class="setting-row"><div class="grow">🔊 Whistle &amp; beeps<small>The iPad's silent switch / volume also applies.</small></div>${chips('sound', [true, false], (o) => (o ? 'On' : 'Off'))}</div>
         </div>
 
+        <div class="section-title">🎤 Sound counting</div>
+        <div class="card">
+          <div class="note">For moves with sound counting turned on (edit a move above), the iPad listens for the ball hitting the wall and counts each hit as a rep. Put the iPad a few steps from the wall, then use the test to pick the right sensitivity.</div>
+          <div class="setting-row"><div class="grow">Sensitivity<small>Higher picks up softer hits, but also more background noise.</small></div>${chips('micSensitivity', [1, 2, 3, 4, 5], (o) => `${o}`)}</div>
+          <div class="setting-row"><div class="grow">Shortest time between hits<small>Stops one hit (and its echo) counting twice.</small></div>${chips('micGap', [200, 300, 500, 800], (o) => `${o / 1000}s`)}</div>
+          <div class="btn-row" style="justify-content:flex-start;padding:0 18px 18px;margin-top:0">
+            <button class="btn" data-action="micTest">🎤 Test the microphone</button>
+          </div>
+          ${mic.supported() ? '' : '<div class="note">⚠️ This browser can\'t use the microphone for counting.</div>'}
+        </div>
+
         <div class="section-title">Backup</div>
         <div class="card">
           <div class="note">All scores are stored only on this iPad. Save a backup now and then (e.g. to Files or iCloud Drive) so you never lose progress.</div>
@@ -729,6 +818,28 @@
         </div></div>
         <div class="btn-row" style="justify-content:flex-start">
           <button class="btn danger small" data-action="resetAll">🗑️ Erase everything</button>
+        </div>`;
+    },
+
+    micTest() {
+      const sens = data.settings.micSensitivity;
+      return `<div class="stripes"></div>
+        <div class="topbar">
+          <button class="icon-btn" data-action="micTestBack" aria-label="Back">⬅️</button>
+          <div class="brand">🎤 Microphone test</div>
+        </div>
+        <div class="card" style="padding:22px;max-width:760px;margin:10px auto">
+          <div class="note" style="padding:0 0 14px">Tap <b>Start listening</b>, then kick the ball at the wall a few times. Every hit should add exactly one to the counter. Talking and footsteps should not.</div>
+          <div class="meter"><i id="meterFill"></i><b id="meterMark" style="left:${(Math.sqrt(mic.threshold()) * 100).toFixed(1)}%"></b></div>
+          <div class="muted" style="font-size:14px;font-weight:700;margin-top:6px">The bar shows how loud it is. A sound must pass the white line to count.</div>
+          <div class="mic-hits" id="micHits">0</div>
+          <div style="text-align:center;font-weight:800;color:var(--ink-2)">hits heard</div>
+          <div class="setting-row" style="padding:18px 0 0;border:0"><div class="grow">Sensitivity</div>
+            <div class="chips">${[1, 2, 3, 4, 5].map((o) => `<button class="chip ${sens === o ? 'on' : ''}" data-action="micSens" data-val="${o}">${o}</button>`).join('')}</div></div>
+          <div class="btn-row">
+            <button class="btn primary" id="micToggle" data-action="micToggle">🎤 Start listening</button>
+            <button class="btn" data-action="micReset">↺ Reset count</button>
+          </div>
         </div>`;
     },
 
@@ -758,7 +869,7 @@
             <div class="field"><label>Kit</label><div class="kit-grid">${kits}</div></div>
             <div class="btn-row" style="justify-content:flex-start">
               <button class="btn primary" data-action="savePlayer">✅ Save</button>
-              ${isNew ? '' : '<button class="btn danger" data-action="deletePlayer">🗑️ Delete player</button>'}
+              ${isNew || state.editFrom !== 'parent' ? '' : '<button class="btn danger" data-action="deletePlayer">🗑️ Delete player</button>'}
             </div>
           </div>
         </div>`;
@@ -855,18 +966,53 @@
 
   const fmtShort = (iso) => new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric' });
 
+  const useMic = (m) => !!(m && m.mic) && mic.supported();
+
   const isStandalone = () => window.navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches;
 
   // ---------------------------------------------------------------------------
   // Training screen logic
   // ---------------------------------------------------------------------------
   const AFTER = {
+    micTest() {
+      cleanup = () => { mic.stop(); state.micReset = null; };
+    },
     train() {
       const btn = document.getElementById('bigbtn');
       const clock = document.getElementById('clock');
       const hint = document.getElementById('hint');
+      const countEl = document.getElementById('count');
       const mode = state.mode;
-      const run = { phase: 'ready', raf: 0, timers: [], t0: 0, lastSec: null };
+      const target = data.settings.raceTarget;
+      const run = { phase: 'ready', raf: 0, t0: 0, lastSec: null, hits: 0, listening: false };
+      const wantMic = useMic(move(state.moveId));
+
+      const showCount = () => {
+        countEl.hidden = false;
+        countEl.textContent = mode === 'race' ? `⚽ ${run.hits} / ${target}` : `⚽ ${run.hits}`;
+      };
+
+      // Each ball-on-wall sound while the clock runs counts as one rep.
+      const onHit = () => {
+        if (run.phase !== 'running' || performance.now() - run.t0 < 300) return;
+        run.hits++;
+        showCount();
+        btn.classList.remove('bump');
+        void btn.offsetWidth; // restart the flash animation
+        btn.classList.add('bump');
+        if (mode === 'race' && run.hits >= target) finishRace();
+      };
+
+      const startMic = () => {
+        mic.start()
+          .then(() => {
+            if (run.phase === 'finished' || state.run !== run) { mic.stop(); return; }
+            mic.onHit = onHit;
+            run.listening = true;
+            btn.classList.add('listening');
+          })
+          .catch(() => toast('🎤 Microphone not available. Count your reps yourself this time.', 3500));
+      };
       const setPhase = (ph) => {
         run.phase = ph;
         btn.className = `bigbtn ${ph}`;
@@ -901,7 +1047,8 @@
             if (sec <= 5 && sec !== run.lastSec) {
               run.lastSec = sec;
               btn.classList.add('hurry');
-              sound.beep();
+              // While listening, skip the beeps: the mic would ignore real hits during them.
+              if (!run.listening) sound.beep();
             }
           } else {
             clock.textContent = fmtStopwatch(elapsed);
@@ -912,16 +1059,22 @@
 
       const startRunning = () => {
         setPhase('running');
+        if (run.listening) btn.classList.add('listening');
         run.t0 = performance.now();
         run.lastSec = null;
         sound.whistle(0.6);
         clock.textContent = mode === 'timed' ? fmtCountdown(data.settings.timedSeconds * 1000) : '0.0';
-        hint.textContent = mode === 'timed' ? 'Go go go! 🔥' : `Tap when you hit ${data.settings.raceTarget}! 🏁`;
+        hint.textContent = mode === 'timed' ? 'Go go go! 🔥' : `Tap when you hit ${target}! 🏁`;
+        if (wantMic) {
+          showCount();
+          hint.textContent = mode === 'timed' ? '🎤 Listening… go go go!' : `🎤 Listening… race to ${target}!`;
+        }
       };
 
       const finishTimed = () => {
         cancelAnimationFrame(run.raf);
         setPhase('finished');
+        mic.stop();
         hint.textContent = 'Time!';
         sound.finalWhistle();
         showEntry();
@@ -931,20 +1084,25 @@
         const ms = performance.now() - run.t0;
         cancelAnimationFrame(run.raf);
         setPhase('finished');
+        mic.stop();
         clock.textContent = fmtStopwatch(ms);
         hint.textContent = 'Finished!';
         sound.finalWhistle();
-        record({ mode: 'race', target: data.settings.raceTarget, timeMs: Math.round(ms) });
+        const fields = { mode: 'race', target, timeMs: Math.round(ms) };
+        if (run.listening) fields.micHits = run.hits;
+        record(fields);
       };
 
       const showEntry = () => {
-        let val = '';
+        // With sound counting, start from what the mic heard; the first key typed replaces it.
+        let val = run.listening ? String(run.hits) : '';
+        let fresh = run.listening;
         const ov = document.createElement('div');
         ov.className = 'entry';
         ov.innerHTML = `<div class="card entry-box">
             <div class="entry-q">⏱️ Time's up! How many did you do?</div>
-            <div class="entry-sub">Type your reps and tap ✅</div>
-            <div class="entry-display" id="entryVal">0</div>
+            <div class="entry-sub">${run.listening ? `🎤 The mic counted <b>${run.hits}</b>. Fix it if it's wrong, then tap ✅` : 'Type your reps and tap ✅'}</div>
+            <div class="entry-display" id="entryVal">${val || '0'}</div>
             <div class="keypad">
               ${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<button data-k="${n}">${n}</button>`).join('')}
               <button data-k="del" aria-label="Delete">⌫</button><button data-k="0">0</button><button data-k="ok" class="ok" aria-label="Save">✅</button>
@@ -956,12 +1114,16 @@
           const b = e.target.closest('[data-k]');
           if (!b) return;
           const k = b.dataset.k;
+          if (fresh && /^\d$/.test(k)) val = '';
+          fresh = false;
           if (k === 'del') val = val.slice(0, -1);
           else if (k === 'ok') {
             const reps = parseInt(val || '0', 10);
             if (!reps && !(await confirmBox('Zero reps?', 'Save a score of 0?', 'Save 0'))) return;
             ov.remove();
-            record({ mode: 'timed', seconds: data.settings.timedSeconds, reps });
+            const fields = { mode: 'timed', seconds: data.settings.timedSeconds, reps };
+            if (run.listening) fields.micHits = run.hits;
+            record(fields);
             return;
           } else if (k === 'skip') {
             ov.remove();
@@ -979,6 +1141,7 @@
         if (run.phase === 'ready') {
           sound.unlock();
           keepAwake.on();
+          if (wantMic) startMic();
           const cd = data.settings.countdown;
           if (cd > 0) {
             setPhase('countdown');
@@ -990,6 +1153,7 @@
           }
           run.raf = requestAnimationFrame(tick);
         } else if (run.phase === 'running' && mode === 'race') {
+          // Tapping still works with sound counting, e.g. if the mic missed a hit.
           // Ignore taps in the first second so a double-tap at the start doesn't stop the clock.
           if (performance.now() - run.t0 > 1000) finishRace();
         }
@@ -1004,6 +1168,7 @@
       cleanup = () => {
         cancelAnimationFrame(run.raf);
         if (run.overlay) run.overlay.remove();
+        mic.stop();
         keepAwake.off();
         state.run = null;
       };
@@ -1055,17 +1220,20 @@
     const isNew = !m;
     const cur = m || { name: '', icon: '⚽' };
     const html = `<div class="field"><label for="mname">Move name</label><input class="input" id="mname" maxlength="22" value="${esc(cur.name)}" placeholder="e.g. Elastico" autocomplete="off"></div>
-      <div class="field"><label>Icon</label><div class="chips" data-single>${MOVE_ICONS.map((i) => `<button class="chip emoji ${i === cur.icon ? 'on' : ''}" data-icon="${i}">${i}</button>`).join('')}</div></div>`;
+      <div class="field"><label>Icon</label><div class="chips" data-single>${MOVE_ICONS.map((i) => `<button class="chip emoji ${i === cur.icon ? 'on' : ''}" data-icon="${i}">${i}</button>`).join('')}</div></div>
+      <div class="field"><label>🎤 Count reps by sound <small class="muted">(for moves where the ball hits a wall)</small></label>
+        <div class="chips mic-chips" data-single><button class="chip ${cur.mic ? 'on' : ''}" data-mic="1">On</button><button class="chip ${cur.mic ? '' : 'on'}" data-mic="0">Off</button></div></div>`;
     const buttons = [{ label: 'Cancel', value: 'cancel' }];
     if (!isNew) buttons.push({ label: 'Delete', value: 'delete', cls: 'danger' });
     buttons.push({ label: 'Save', value: 'save', cls: 'primary' });
     const r = await showModal({ title: isNew ? 'New move' : 'Edit move', html, buttons });
     if (r.value === 'save') {
       const name = r.body.querySelector('#mname').value.trim();
-      const icon = r.body.querySelector('.chip.on')?.dataset.icon || '⚽';
+      const icon = r.body.querySelector('.chip.emoji.on')?.dataset.icon || '⚽';
+      const micOn = r.body.querySelector('.mic-chips .chip.on')?.dataset.mic === '1';
       if (!name) { toast('Give the move a name'); return; }
-      if (isNew) data.moves.push({ id: uid(), name, icon });
-      else Object.assign(m, { name, icon });
+      if (isNew) data.moves.push({ id: uid(), name, icon, mic: micOn });
+      else Object.assign(m, { name, icon, mic: micOn });
       save();
       render();
     } else if (r.value === 'delete') {
@@ -1127,6 +1295,11 @@
   const ACTIONS = {
     toPlayers: () => go('players'),
     family: () => go('family'),
+    editPlayerTile: (el) => {
+      const p = player(el.dataset.id);
+      if (p) go('editPlayer', { editPlayerId: p.id, editFrom: 'players', draft: { name: p.name, number: p.number, kit: p.kit } });
+    },
+    addPlayerTile: () => go('editPlayer', { editPlayerId: null, editFrom: 'players', draft: newDraft() }),
     firstPlayer: () => go('editPlayer', { editPlayerId: null, editFrom: 'players', draft: newDraft() }),
     newPlayer: () => go('editPlayer', { editPlayerId: null, editFrom: 'parent', draft: newDraft() }),
     editPlayer: (el) => {
@@ -1225,7 +1398,53 @@
       const raw = el.dataset.val;
       data.settings[key] = raw === 'true' ? true : raw === 'false' ? false : Number(raw);
       save();
+      mic.configure();
       render();
+    },
+    micTest: () => go('micTest'),
+    micTestBack: () => go('parent'),
+    micToggle: async (el) => {
+      if (mic.stream) {
+        mic.stop();
+        el.textContent = '🎤 Start listening';
+        document.getElementById('meterFill').style.width = '0%';
+        return;
+      }
+      try {
+        await mic.start();
+      } catch (e) {
+        toast('🎤 Could not use the microphone. Allow it in Settings → Safari (or the app) → Microphone.', 4000);
+        return;
+      }
+      if (state.view !== 'micTest') { mic.stop(); return; }
+      el.textContent = '⏹ Stop listening';
+      let hits = 0;
+      mic.onHit = () => {
+        hits++;
+        const h = document.getElementById('micHits');
+        h.textContent = hits;
+        h.classList.remove('bump');
+        void h.offsetWidth;
+        h.classList.add('bump');
+      };
+      mic.onLevel = (lvl) => {
+        const f = document.getElementById('meterFill');
+        if (!f) return;
+        f.style.width = `${Math.min(100, Math.sqrt(lvl) * 100).toFixed(1)}%`;
+        f.classList.toggle('over', lvl > mic.threshold());
+      };
+      state.micReset = () => { hits = 0; };
+    },
+    micReset: () => {
+      if (state.micReset) state.micReset();
+      document.getElementById('micHits').textContent = '0';
+    },
+    micSens: (el) => {
+      data.settings.micSensitivity = Number(el.dataset.val);
+      save();
+      mic.configure();
+      document.querySelectorAll('[data-action="micSens"]').forEach((c) => c.classList.toggle('on', c === el));
+      document.getElementById('meterMark').style.left = `${(Math.sqrt(mic.threshold()) * 100).toFixed(1)}%`;
     },
     exportData,
     importData,
